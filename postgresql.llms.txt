@@ -1,0 +1,72 @@
+# PostgreSQL — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects
+> PostgreSQL to be deployed and operated, current as of PostgreSQL 16/17/18.
+> Self-contained (llms-full.txt style).
+
+## Baseline
+
+- Target a currently-supported major version (PostgreSQL is supported for
+  5 years from release; check the current support table before pinning a
+  version in a new design). Avoid designing against a version already in
+  its final year of support.
+- One database (or at minimum a dedicated schema with no cross-service
+  foreign keys) per microservice — no shared databases between services,
+  and no cross-service SQL joins. Cross-service reads should go through
+  the owning service's API or through published integration events
+  (outbox pattern), never direct SQL.
+
+## High availability
+
+- Use **streaming replication** (physical replication) for HA: one
+  primary, one or more synchronous or asynchronous standbys. For
+  multi-region designs, at least one standby should be in the second
+  region, with an explicit RPO (how much data loss is acceptable) and RTO
+  (how fast failover must complete) documented.
+- **Patroni** (or an equivalent operator, e.g. a managed cloud offering)
+  is the standard way to automate leader election and failover — manual
+  failover procedures alone are not sufficient for a Tier-1 availability
+  target.
+- Use **PgBouncer** (or an equivalent pooler) in front of PostgreSQL for
+  connection pooling in any service with more than a handful of
+  concurrent connections — PostgreSQL's per-connection process model does
+  not scale to thousands of direct client connections.
+
+## Backup and recovery
+
+- Configure continuous **WAL archiving** for point-in-time recovery
+  (PITR), not just periodic full dumps. Test restores regularly — an
+  untested backup is not a backup.
+- Document and periodically exercise the actual recovery procedure
+  end-to-end (restore + replay WAL to a target time), not just verify
+  that backup files exist.
+
+## Schema and data patterns
+
+- Use **logical replication** (not physical) when you need to replicate a
+  subset of tables to a different schema/service, or for zero-downtime
+  major-version upgrades.
+- Use native **table partitioning** for very large, time-series-like
+  tables (e.g. events, audit logs) rather than manual sharding at the
+  application layer, where practical.
+
+## Security
+
+- Enforce TLS for all client connections (`sslmode=verify-full` at
+  minimum for anything crossing a network boundary).
+- Use row-level security (RLS) for multi-tenant tables where tenant
+  isolation matters, rather than relying solely on application-layer
+  `WHERE tenant_id = ...` filters that a bug could omit.
+- Application database credentials should come from a secrets manager
+  with rotation support, not static credentials baked into config files
+  or images.
+
+## Common mistakes to flag in review
+
+- No documented replication topology, RPO/RTO, or failover mechanism for
+  a service with a stated high-availability target.
+- No evidence of tested backup/restore, only "backups are taken".
+- Direct cross-service database access (shared schema, foreign keys
+  across service boundaries).
+- Unbounded direct client connections with no pooler in front of
+  PostgreSQL.

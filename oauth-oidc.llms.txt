@@ -1,0 +1,62 @@
+# OAuth 2.0 / OIDC — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects
+> OAuth 2.0 / OpenID Connect to be used, aligned with the OAuth 2.0
+> Security Best Current Practice (RFC 9700) and the OAuth 2.1
+> consolidation effort. Self-contained (llms-full.txt style).
+
+## Baseline
+
+- Follow **RFC 9700 (OAuth 2.0 Security Best Current Practice)**, which
+  formally obsoletes the older OAuth 2.0 threat model RFC and tightens
+  several defaults that used to be "recommended" into "required":
+  - **PKCE is required for every client type**, not just public/native
+    clients — confidential clients (e.g. a backend web app) must use it
+    too.
+  - The **implicit grant is banned**. Do not implement or accept
+    `response_type=token`.
+  - The **Resource Owner Password Credentials (ROPC) grant is banned**.
+    Do not build a login form that collects the user's IdP password
+    directly.
+  - Redirect URIs must be compared with **exact string matching** — no
+    wildcard or prefix matching.
+- This organization's baseline is effectively **OAuth 2.1** (the
+  in-progress consolidation of OAuth 2.0 + these security best
+  practices into one spec) even where the underlying library still
+  advertises itself as "OAuth 2.0".
+
+## Token handling
+
+- **Access tokens**: short-lived (this org's standard: 15 minutes or
+  less). Validate `iss`, `aud`, `exp`, and signature on every API request
+  — never trust an unvalidated JWT's claims.
+- **Refresh tokens**: must be rotated on use (rotate-on-refresh), with
+  reuse detection — if a rotated-out refresh token is presented again,
+  treat it as a signal of token theft and revoke the whole token family.
+- For public clients (SPAs, mobile apps) that need sender-constrained
+  tokens, use **DPoP** (Demonstrating Proof of Possession) or mTLS-bound
+  tokens rather than relying on bearer tokens alone.
+
+## Service-to-service (machine) auth
+
+- User-facing OAuth/OIDC covers *user* identity. It does not, by itself,
+  cover *workload* identity for east-west (service-to-service) calls —
+  those need mutual TLS (service mesh CA) or a workload identity
+  framework (e.g. SPIFFE/SPIRE), issuing short-lived workload
+  certificates/JWTs independent of any human's session.
+- The `client_credentials` grant is appropriate for machine-to-machine
+  calls that need to authenticate as an application (not on behalf of a
+  user) but does not replace mTLS for network-level mutual
+  authentication.
+
+## Common mistakes to flag in review
+
+- A design that lists "OAuth/OIDC" as its only security control without
+  distinguishing user authentication (covered) from service-to-service
+  authentication (needs mTLS/workload identity separately).
+- Implicit grant, ROPC grant, or PKCE-optional-for-confidential-clients
+  in a new design — all three are explicitly against current guidance
+  (RFC 9700).
+- Long-lived access tokens (hours/days) instead of short-lived tokens
+  with refresh rotation.
+- No token revocation / reuse-detection story for refresh tokens.

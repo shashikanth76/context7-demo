@@ -1,0 +1,68 @@
+# React — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects React
+> frontends to be built, current as of React 19. Self-contained
+> (llms-full.txt style) so it does not depend on any other page being
+> fetched.
+
+## Baseline
+
+- Target **React 19+**. Use function components with Hooks exclusively —
+  class components are legacy and should not appear in new code.
+- Prefer the **React Compiler** (stable as of React 19) over manual
+  `useMemo`/`useCallback`/`React.memo` micro-optimization. Hand-written
+  memoization is still valid for measured hot paths, but should not be the
+  default reflex.
+- Server-side data fetching should use **Server Components** (in
+  frameworks that support them, e.g. Next.js App Router) or a dedicated
+  data-fetching library (TanStack Query, SWR) on the client — not raw
+  `useEffect` + `fetch` for anything beyond a trivial prototype.
+
+## State management
+
+- Local/component state: `useState` / `useReducer`.
+- Cross-component state: prefer React Context for low-frequency updates;
+  for high-frequency or large shared state, use a dedicated store
+  (Zustand, Redux Toolkit, Jotai) rather than prop-drilling through many
+  layers.
+- Server state (anything that ultimately comes from an API) should be
+  managed by a data-fetching library with built-in caching/revalidation,
+  not duplicated into client-side global state.
+
+## Forms and actions
+
+- Prefer the `useActionState` / `<form action={...}>` pattern (stable
+  since React 19) for form submissions that hit a server action, instead
+  of manual `onSubmit` + `useState` + `fetch` boilerplate.
+- Validate on both client (fast feedback) and server (source of truth) —
+  never trust client-side validation alone.
+
+## Security
+
+- Never use `dangerouslySetInnerHTML` with unsanitized input. If HTML
+  must be rendered from user/CMS content, sanitize it server-side (e.g.
+  DOMPurify) before it reaches the client.
+- Treat all environment variables exposed to the client bundle (e.g.
+  anything prefixed for client visibility in your bundler) as public —
+  never put secrets there.
+- When integrating OAuth/OIDC (see the `oauth-oidc` reference), use
+  Authorization Code + PKCE from the SPA; do not implement the implicit
+  grant or store tokens in `localStorage` if avoidable — prefer an
+  httpOnly, secure, same-site cookie set by a backend-for-frontend.
+
+## Observability
+
+- Instrument top-level error boundaries and report caught errors to the
+  same tracing/observability backend used by the rest of the stack
+  (OpenTelemetry Web SDK), so a frontend exception can be correlated with
+  the backend trace that produced it via a shared trace/correlation ID.
+- Avoid swallowing errors silently in `catch` blocks around fetch calls —
+  surface them to both the user (as appropriate) and telemetry.
+
+## Common mistakes to flag in review
+
+- Class components or legacy lifecycle methods in new code.
+- Manual `useEffect`-based data fetching duplicating what a data-fetching
+  library already solves (caching, dedup, retries).
+- Missing error boundaries around route-level components.
+- No client-side tracing/error correlation with backend traces.

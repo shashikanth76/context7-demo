@@ -1,0 +1,74 @@
+# Kubernetes — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects
+> workloads to be deployed on Kubernetes. Self-contained (llms-full.txt
+> style).
+
+## Availability and scheduling
+
+- For any service with a stated high-availability target, use **pod
+  topology spread constraints** (or, at minimum, pod anti-affinity) to
+  spread replicas across zones/nodes — a Deployment with 3 replicas that
+  all land on the same zone provides no zone-level redundancy.
+- Define a **PodDisruptionBudget** for every Tier-1/Tier-2 workload so
+  voluntary disruptions (node drains, cluster upgrades) don't take down
+  all replicas simultaneously.
+- Multi-region availability targets require workloads to actually run in
+  more than one cluster/region — spreading pods across zones within a
+  single region satisfies zone-level HA, not region-level HA.
+
+## Health and lifecycle
+
+- Configure all three probe types where applicable: **startup** probe
+  (for slow-starting apps, so liveness doesn't kill a still-initializing
+  container), **readiness** probe (removes a pod from Service endpoints
+  when it can't currently serve traffic), and **liveness** probe (restarts
+  a pod that's wedged).
+- Set explicit CPU/memory **requests and limits** for every container —
+  no requests means the scheduler can't bin-pack correctly, and no
+  memory limit risks one workload starving its node.
+
+## Networking
+
+- **Gateway API is the current, actively-developed way to configure
+  ingress traffic routing** (GatewayClass/Gateway/HTTPRoute/GRPCRoute) —
+  the older Ingress API still works and is supported, but new designs
+  needing header-based routing, traffic weighting, or other advanced
+  routing should default to Gateway API rather than Ingress annotations
+  specific to one controller.
+- Route all synchronous service-to-service traffic through the service
+  mesh (or equivalent) rather than direct pod-to-pod calls, so mTLS,
+  retries, and traffic policy are applied consistently.
+
+## Security
+
+- Use **Pod Security Admission** (the built-in, namespace-labeled
+  `restricted`/`baseline`/`privileged` levels) — the older PodSecurityPolicy
+  API was removed from Kubernetes; any design still referencing PSP needs
+  updating.
+- Avoid running containers as root; set `runAsNonRoot: true` and drop all
+  capabilities not explicitly required.
+- Secrets should come from an external secrets manager synced into
+  Kubernetes Secrets (or via a CSI secrets-store driver), not committed
+  as plain Kubernetes Secret manifests in version control.
+
+## Observability
+
+- Ensure every workload emits OpenTelemetry-instrumented traces and that
+  the cluster runs (or workloads point to) an OpenTelemetry Collector
+  DaemonSet/Deployment so trace context isn't lost between hops.
+- Use resource `requests` as the basis for capacity planning and
+  horizontal/vertical autoscaler tuning — autoscaling on CPU alone
+  without also setting requests correctly leads to noisy scaling
+  behavior.
+
+## Common mistakes to flag in review
+
+- No topology spread / anti-affinity for a stated high-availability
+  requirement, or conflating zone-spread within one region with
+  multi-region availability.
+- Missing PodDisruptionBudget on a Tier-1 workload.
+- References to PodSecurityPolicy (removed) instead of Pod Security
+  Admission.
+- Direct pod-to-pod service calls bypassing the mesh/gateway for
+  east-west traffic that's meant to be mTLS-protected.

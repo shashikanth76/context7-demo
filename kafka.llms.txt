@@ -1,0 +1,67 @@
+# Apache Kafka — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects
+> Kafka to be used, current as of Kafka 3.x/4.x (KRaft). Self-contained
+> (llms-full.txt style).
+
+## Baseline
+
+- Kafka **4.0 and newer runs exclusively in KRaft mode** — ZooKeeper
+  support was removed entirely. New clusters must be deployed in KRaft
+  mode; existing ZooKeeper-mode clusters on Kafka 3.x need a planned
+  migration before upgrading to 4.x.
+- Treat Kafka as the standard event backbone for inter-service
+  integration events and asynchronous workflows (see the org's
+  architecture ADRs) — avoid introducing a second messaging technology
+  without an explicit exception.
+
+## Producers
+
+- Enable **idempotent producers** (`enable.idempotence=true` — the
+  default in modern Kafka clients) for any topic feeding financial or
+  otherwise state-changing consumers, to avoid duplicate delivery on
+  retried sends.
+- For workflows that need exactly-once processing end-to-end (not just
+  exactly-once *production*), use Kafka's transactional API
+  (`transactional.id`, `read_committed` isolation level on the consumer
+  side) rather than trying to hand-roll idempotency at the application
+  layer alone.
+
+## Consumers
+
+- Every consumer group must define: a maximum retry count for a failing
+  message, and a **dead-letter topic** to route to once that count is
+  exceeded — an unbounded retry loop on a poison-pill message will stall
+  the whole partition.
+- Prefer non-blocking / topic-based retry patterns (a retry topic with
+  increasing backoff, then a DLQ) over blocking `Thread.sleep`-style
+  retry loops inside the consumer poll loop.
+- Set `max.poll.records` and process time bounded so a slow batch doesn't
+  exceed `max.poll.interval.ms` and trigger a spurious rebalance.
+
+## Schema management
+
+- All event payloads should go through the shared schema registry
+  (Avro or JSON Schema) with backward-compatible evolution rules enforced
+  — breaking schema changes are a common source of silent consumer
+  failures.
+
+## Operations
+
+- Tiered storage (available in recent Kafka versions) can be used to
+  offload older log segments to object storage, reducing broker disk
+  cost for topics with long retention.
+- For multi-region designs, evaluate **Cluster Linking** / MirrorMaker 2
+  for cross-region replication, and be explicit about the
+  consistency/latency trade-off of asynchronous cross-region replication
+  versus a stretched cluster.
+
+## Common mistakes to flag in review
+
+- No dead-letter topic or retry-count bound on a consumer group.
+- Producers without idempotence enabled feeding a state-changing
+  consumer.
+- A design that names "Kafka" as the event backbone but doesn't specify
+  schema registry usage, DLQ behavior, or (for multi-region designs)
+  cross-region replication strategy.
+- Assuming ZooKeeper mode is still available on Kafka 4.0+.

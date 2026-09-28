@@ -1,0 +1,75 @@
+# Spring Boot — Recommended Patterns Reference
+
+> Stable, version-pinned reference for how this organization expects
+> Spring Boot microservices to be built, current as of Spring Boot 3.x/4.x
+> on Java 17+. Self-contained (llms-full.txt style).
+
+## Baseline
+
+- Target **Java 17+** (LTS) with **Spring Boot 3.x or newer**. Spring Boot
+  3 requires Java 17 as a floor and migrated the whole ecosystem from
+  `javax.*` to `jakarta.*` — any dependency still on `javax.*` is
+  incompatible and must be upgraded or replaced.
+- Spring Boot 3.2+ supports **virtual threads** (Project Loom,
+  `spring.threads.virtual.enabled=true`) for blocking I/O-bound workloads
+  (typical REST-over-JDBC/Kafka microservices) — this can remove the need
+  for a large reactive rewrite just to get better thread utilization
+  under load.
+
+## Circuit breaking / resiliency
+
+- **Netflix Hystrix has been in maintenance mode since 2018 and is not
+  recommended for new designs.** Use **resilience4j** (via
+  `spring-cloud-starter-circuitbreaker-resilience4j`) instead, or the
+  `spring-retry`/`@Retryable` annotations for simple bounded retries.
+- Configure, per downstream dependency: connect/read timeout, bounded
+  retry count with backoff, circuit breaker failure-rate threshold and
+  open-state duration, and a bulkhead (separate thread/connection pool)
+  so one slow dependency cannot exhaust shared resources.
+- resilience4j integrates with Micrometer, so circuit breaker state
+  transitions and retry counts are exported as metrics automatically.
+
+## Observability
+
+- Use **Micrometer** for metrics and **Micrometer Tracing** (which
+  replaced Spring Cloud Sleuth, deprecated) for distributed tracing —
+  configure an OpenTelemetry bridge (`micrometer-tracing-bridge-otel`) to
+  export spans via OTLP, so traces flow into the same backend as every
+  other service in the stack.
+- `management.tracing.sampling.probability` controls the trace sampling
+  rate; Spring Boot defaults to 10% — override to 100% in
+  pre-production and align production sampling with the org's
+  observability standard.
+- Expose `/actuator/health`, `/actuator/metrics`, and `/actuator/info`;
+  wire liveness/readiness health groups
+  (`management.endpoint.health.probes.enabled=true`) for Kubernetes probe
+  integration.
+
+## Messaging (Kafka)
+
+- Use Spring for Apache Kafka's `@RetryableTopic` / non-blocking retry
+  support to implement bounded retries plus a dead-letter topic, instead
+  of hand-rolled retry loops inside the consumer.
+- Enable idempotent producers (`enable.idempotence=true`, the default in
+  recent Kafka client versions) for any topic feeding financial or
+  state-changing consumers.
+
+## Security
+
+- Use `spring-boot-starter-oauth2-resource-server` with JWT validation
+  for APIs behind OAuth/OIDC — validate issuer, audience, and expiry
+  server-side; never trust a token's claims without signature validation
+  against the identity provider's published JWKS.
+- Service-to-service calls should be mutually authenticated (mTLS via the
+  service mesh) in addition to any bearer token — a valid JWT is not a
+  substitute for workload identity.
+
+## Common mistakes to flag in review
+
+- Any dependency or code sample referencing Hystrix, `@HystrixCommand`,
+  or Spring Cloud Netflix (the whole Netflix OSS stack, including
+  Hystrix/Ribbon/Zuul, is in maintenance mode / archived).
+- Missing circuit breaker / timeout / retry configuration for a
+  synchronous downstream call.
+- Sleuth references in new code (superseded by Micrometer Tracing).
+- Kafka consumers with no dead-letter topic or unbounded retry loop.
